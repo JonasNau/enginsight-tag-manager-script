@@ -1,0 +1,1 @@
+python enginsight_tag_manager.py --url https://api.enginsight.com --key-id YOUR_KEY_ID --key-secret YOUR_KEY_SECRET --tag-key PHYSISCHER_STANDORT --tag-value MÜNCHEN --condition "192\.168\.178\." 
