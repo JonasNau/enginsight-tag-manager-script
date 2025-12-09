@@ -67,7 +67,7 @@ class EngInsightTagManager:
     def get_all_hosts(self) -> List[Dict[str, Any]]:
         """Ruft alle Hosts aus der EngInsight API ab."""
         print("📡 Rufe alle Hosts ab...")
-        response = self._make_request('GET', '/v1/hosts')
+        response = self._make_request('GET', '/v1/hosts?limit=-1')
         hosts = response.get('hosts', [])
         print(f"✓ {len(hosts)} Hosts gefunden\n")
         return hosts
