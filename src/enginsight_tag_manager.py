@@ -1,9 +1,33 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+EngInsight Tag Manager - Automatisches Tag-Management basierend auf Regex-Bedingungen
+Dieses Skript verbindet sich mit der EngInsight API, um Hosts basierend auf
+definierten Regex-Bedingungen zu taggen oder zu enttaggen.
+Voraussetzungen:
+- Python 3.6+
+- requests-Bibliothek (pip install requests)
+- Optional: python-dotenv für Umgebungsvariablen (pip install python-dotenv)
+
+
+Autor: IBYKUS AG - Jonas Naumann
+
+
+Lizenz: MIT
+"""
+
 import requests
 import ipaddress
 import argparse
 import re
 import json
-from typing import List, Dict, Any
+import os
+from typing import List, Dict, Any, Optional
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    load_dotenv = None
 
 class EngInsightTagManager:
     def __init__(self, base_url: str, access_key_id: str, access_key_secret: str,
@@ -59,7 +83,7 @@ class EngInsightTagManager:
             response.raise_for_status()
             return response.json() if response.text else {}
         except requests.exceptions.RequestException as e:
-            print(f"❌ API Error: {e}")
+            print(f"API Error: {e}")
             if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 print(f"   Response: {e.response.text}")
             return {}
@@ -101,13 +125,13 @@ class EngInsightTagManager:
             new_tags = current_tags + [self.full_tag]
             
             if self.dry_run:
-                print(f"  ℹ️  [DRY-RUN] Tag würde hinzugefügt: {hostname}")
-                print(f"       Neuer Tag: {self.full_tag}")
+                print(f"[DRY-RUN] Tag würde hinzugefügt: {hostname}")
+                print(f"Neuer Tag: {self.full_tag}")
                 return True
             else:
                 if self.update_host_tags(host_id, new_tags):
-                    print(f"  ✓ Tag hinzugefügt: {hostname}")
-                    print(f"     Tag: {self.full_tag}")
+                    print(f"✓ Tag hinzugefügt: {hostname}")
+                    print(f"Tag: {self.full_tag}")
                     return True
         return False
     
@@ -121,21 +145,27 @@ class EngInsightTagManager:
             new_tags = [tag for tag in current_tags if tag != self.full_tag]
             
             if self.dry_run:
-                print(f"  ℹ️  [DRY-RUN] Tag würde entfernt: {hostname}")
-                print(f"       Entfernter Tag: {self.full_tag}")
+                print(f"[DRY-RUN] Tag würde entfernt: {hostname}")
+                print(f"Entfernter Tag: {self.full_tag}")
                 return True
             else:
                 if self.update_host_tags(host_id, new_tags):
-                    print(f"  ✓ Tag entfernt: {hostname}")
-                    print(f"     Tag: {self.full_tag}")
+                    print(f"✓ Tag entfernt: {hostname}")
+                    print(f"Tag: {self.full_tag}")
                     return True
         return False
     
     def get_host_ips(self, host: Dict[str, Any]) -> List[str]:
         """Extrahiert alle IPs eines Hosts für die Anzeige."""
         ips = []
-        for nic in host.get('nics', []):
-            for address in nic.get('addresses', []):
+        nics = host.get('nics') or []
+        for nic in nics:
+            if not isinstance(nic, dict):
+                continue
+            addresses = nic.get('addresses') or []
+            for address in addresses:
+                if not isinstance(address, str):
+                    continue
                 try:
                     ip_str = address.split('/')[0]
                     ip = ipaddress.ip_address(ip_str)
@@ -147,7 +177,10 @@ class EngInsightTagManager:
     
     def check_condition(self, host: Dict[str, Any]) -> bool:
         """Prüft, ob der Host die Regex-Bedingungen erfüllt."""
-        host_json = json.dumps(host, indent=2)
+        try:
+            host_json = json.dumps(host, indent=2, default=str)
+        except Exception:
+            host_json = str(host)
         if self.condition_mode == "or":
             positive_ok = any(p.search(host_json) is not None for p in self.condition_patterns) if self.condition_patterns else True
         else:  # AND (default)
@@ -185,31 +218,39 @@ class EngInsightTagManager:
         print(f"{'='*80}\n")
         
         for host in hosts:
-            host_id = host.get('_id')
-            hostname = host.get('displayName') or host.get('hostname', 'Unknown')
-            ips = self.get_host_ips(host)
-            condition_met = self.check_condition(host)
-            if self.negate_conditions:
-                condition_met = not condition_met
-            has_tag = self.has_tag(host)
-            
-            print(f"🖥️  {hostname}")
-            print(f"   IPs: {', '.join(ips) if ips else 'Keine IPv4-Adressen'}")
-            print(f"   Bedingung erfüllt: {'✓' if condition_met else '✗'}")
-            print(f"   Hat Tag: {'✓' if has_tag else '✗'}")
-            
-            if condition_met and not has_tag:
-                # Bedingung erfüllt und Tag fehlt → Tag hinzufügen
-                if self.add_tag(host):
-                    added_count += 1
-            elif not condition_met and has_tag:
-                # Bedingung nicht erfüllt und Tag vorhanden → Tag entfernen
-                if self.remove_tag(host):
-                    removed_count += 1
-            else:
-                # Keine Änderung nötig
-                status = "Tag bereits vorhanden" if has_tag else "Tag nicht erforderlich"
-                print(f"  → {status}")
+            try:
+                host_id = host.get('_id') if isinstance(host, dict) else None
+                hostname = (
+                    host.get('displayName') if isinstance(host, dict) else None
+                ) or (
+                    host.get('hostname') if isinstance(host, dict) else None
+                ) or 'Unknown'
+                ips = self.get_host_ips(host if isinstance(host, dict) else {})
+                condition_met = self.check_condition(host if isinstance(host, dict) else {})
+                if self.negate_conditions:
+                    condition_met = not condition_met
+                has_tag = self.has_tag(host) if isinstance(host, dict) else False
+                
+                print(f"Hostname: {hostname}")
+                print(f"   IPs: {', '.join(ips) if ips else 'Keine IPv4-Adressen'}")
+                print(f"   Bedingung erfüllt: {'✓' if condition_met else '✗'}")
+                print(f"   Hat Tag: {'✓' if has_tag else '✗'}")
+                
+                if condition_met and not has_tag:
+                    # Bedingung erfüllt und Tag fehlt → Tag hinzufügen
+                    if self.add_tag(host):
+                        added_count += 1
+                elif not condition_met and has_tag:
+                    # Bedingung nicht erfüllt und Tag vorhanden → Tag entfernen
+                    if self.remove_tag(host):
+                        removed_count += 1
+                else:
+                    # Keine Änderung nötig
+                    status = "Tag bereits vorhanden" if has_tag else "Tag nicht erforderlich"
+                    print(f"  → {status}")
+                    unchanged_count += 1
+            except Exception as e:
+                print(f"Host konnte nicht verarbeitet werden: {e}")
                 unchanged_count += 1
             
             print()
@@ -223,7 +264,13 @@ class EngInsightTagManager:
         print(f"{'='*80}")
 
 
+def _env_or_arg(arg_value: Optional[str], env_key: str) -> Optional[str]:
+    return arg_value or os.getenv(env_key)
+
+
 def main():
+    if load_dotenv:
+        load_dotenv()
     parser = argparse.ArgumentParser(
         description='EngInsight Tag Manager - Automatisches Tag-Management basierend auf Regex-Bedingungen',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -303,19 +350,19 @@ Beispiele:
     
     parser.add_argument(
         '--url',
-        required=True,
+        required=False,
         help='EngInsight API Base-URL (z.B. https://api.enginsight.com)'
     )
     
     parser.add_argument(
         '--key-id',
-        required=True,
+        required=False,
         help='EngInsight Access Key ID'
     )
     
     parser.add_argument(
         '--key-secret',
-        required=True,
+        required=False,
         help='EngInsight Access Key Secret'
     )
     
@@ -368,13 +415,27 @@ Beispiele:
     )
     
     args = parser.parse_args()
+
+    base_url = _env_or_arg(args.url, "ENGINSIGHT_API_URL")
+    access_key_id = _env_or_arg(args.key_id, "ENGINSIGHT_ACCESS_KEY_ID")
+    access_key_secret = _env_or_arg(args.key_secret, "ENGINSIGHT_ACCESS_KEY_SECRET")
+
+    missing = []
+    if not base_url:
+        missing.append("ENGINSIGHT_API_URL or --url")
+    if not access_key_id:
+        missing.append("ENGINSIGHT_ACCESS_KEY_ID or --key-id")
+    if not access_key_secret:
+        missing.append("ENGINSIGHT_ACCESS_KEY_SECRET or --key-secret")
+    if missing:
+        parser.error("Missing required configuration: " + ", ".join(missing))
     
-    print("🚀 EngInsight Tag Manager gestartet\n")
+    print("EngInsight Tag Manager gestartet\n")
     
     manager = EngInsightTagManager(
-        base_url=args.url,
-        access_key_id=args.key_id,
-        access_key_secret=args.key_secret,
+        base_url=base_url,
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
         tag_key=args.tag_key,
         tag_value=args.tag_value,
         conditions=args.condition,
@@ -387,7 +448,7 @@ Beispiele:
     
     manager.process_hosts()
     
-    print("\n✅ Verarbeitung abgeschlossen")
+    print("\nVerarbeitung abgeschlossen")
 
 
 if __name__ == '__main__':
