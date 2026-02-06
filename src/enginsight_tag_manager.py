@@ -105,6 +105,15 @@ class EngInsightTagManager:
         hosts = response.get('hosts', [])
         print(f"{len(hosts)} Hosts gefunden\n")
         return hosts
+
+    def get_host_by_id(self, host_id: str) -> Optional[Dict[str, Any]]:
+        """Ruft einen Host anhand der ID ab (für Verifikation)."""
+        if not host_id:
+            return None
+        response = self._make_request('GET', f'/v1/hosts/{host_id}')
+        if not response:
+            return None
+        return response.get('host') if isinstance(response, dict) else None
     
     def has_tag(self, host: Dict[str, Any]) -> bool:
         """Prüft, ob ein Host den Tag bereits hat."""
@@ -127,6 +136,14 @@ class EngInsightTagManager:
         except Exception as e:
             print(f"  Fehler beim Update: {e}")
             return False
+
+    def verify_tag_state(self, host_id: str) -> Optional[bool]:
+        """Prüft, ob der Tag nach Update tatsächlich gesetzt ist."""
+        host = self.get_host_by_id(host_id)
+        if not isinstance(host, dict):
+            return None
+        tags = host.get('tags', [])
+        return self.full_tag in tags
     
     def add_tag(self, host: Dict[str, Any]) -> bool:
         """Fügt einen Tag zu einem Host hinzu."""
@@ -143,6 +160,10 @@ class EngInsightTagManager:
                 return True
             else:
                 if self.update_host_tags(host_id, new_tags):
+                    verified = self.verify_tag_state(host_id)
+                    if verified is False:
+                        print(f"  Warnung: Tag wurde nach Update nicht gefunden: {hostname}")
+                        return False
                     print(f"Tag hinzugefügt: {hostname}")
                     print(f"Tag: {self.full_tag}")
                     return True
@@ -163,6 +184,10 @@ class EngInsightTagManager:
                 return True
             else:
                 if self.update_host_tags(host_id, new_tags):
+                    verified = self.verify_tag_state(host_id)
+                    if verified is True:
+                        print(f"  Warnung: Tag ist nach Update weiterhin gesetzt: {hostname}")
+                        return False
                     print(f"Tag entfernt: {hostname}")
                     print(f"Tag: {self.full_tag}")
                     return True
