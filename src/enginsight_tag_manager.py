@@ -36,7 +36,8 @@ class EngInsightTagManager:
                  value_conditions: List[Tuple[str, str]] = None,
                  negative_value_conditions: List[Tuple[str, str]] = None,
                  dry_run: bool = False, negate_conditions: bool = False,
-                 condition_mode: str = "and", negative_condition_mode: str = "and"):
+                 condition_mode: str = "and", negative_condition_mode: str = "and",
+                 verbose: bool = False):
         """
         Initialisiert den EngInsight Tag Manager.
         
@@ -62,6 +63,7 @@ class EngInsightTagManager:
         self.negate_conditions = negate_conditions
         self.condition_mode = condition_mode.lower()
         self.negative_condition_mode = negative_condition_mode.lower()
+        self.verbose = verbose
         
         # Tag formatieren: ~key:value oder nur key
         if tag_value:
@@ -272,6 +274,12 @@ class EngInsightTagManager:
         removed_count = 0
         unchanged_count = 0
         matched_count = 0
+        matched_hosts = []
+        added_hosts = []
+        removed_hosts = []
+        kept_hosts = []
+        kept_with_tag_hosts = []
+        kept_without_tag_hosts = []
         
         print(f"{'='*80}")
         if self.condition_patterns or self.negative_condition_patterns:
@@ -337,20 +345,32 @@ class EngInsightTagManager:
                 print(f"   Hat Tag: {'yes' if has_tag else 'no'}")
                 if condition_met:
                     matched_count += 1
+                    matched_hosts.append(hostname)
                 
                 if condition_met and not has_tag:
                     # Bedingung erfüllt und Tag fehlt → Tag hinzufügen
                     if self.add_tag(host):
                         added_count += 1
+                        added_hosts.append(hostname)
+                    action_label = "Tag wird hinzugefügt" if not self.dry_run else "Tag würde hinzugefügt"
                 elif not condition_met and has_tag:
                     # Bedingung nicht erfüllt und Tag vorhanden → Tag entfernen
                     if self.remove_tag(host):
                         removed_count += 1
+                        removed_hosts.append(hostname)
+                    action_label = "Tag wird entfernt" if not self.dry_run else "Tag würde entfernt"
                 else:
                     # Keine Änderung nötig
-                    status = "Tag bereits vorhanden" if has_tag else "Tag nicht erforderlich"
+                    status = "Tag bleibt gesetzt" if has_tag else "Kein Tag gesetzt"
+                    action_label = "Tag wird beibehalten"
+                    kept_hosts.append(hostname)
+                    if has_tag:
+                        kept_with_tag_hosts.append(hostname)
+                    else:
+                        kept_without_tag_hosts.append(hostname)
                     print(f"  → {status}")
                     unchanged_count += 1
+                print(f"  → Aktion: {action_label}")
             except Exception as e:
                 print(f"Host konnte nicht verarbeitet werden: {e}")
                 unchanged_count += 1
@@ -364,6 +384,16 @@ class EngInsightTagManager:
         print(f"   Total hosts that match: {matched_count}")
         print(f"   Unchanged:         {unchanged_count}")
         print(f"   Total:             {len(hosts)}")
+        if self.verbose:
+            def _fmt_list(items: List[str]) -> str:
+                return ", ".join(sorted(items)) if items else "(keine)"
+            print("\nDetails (verbose):")
+            print(f"   Matched:           {_fmt_list(matched_hosts)}")
+            print(f"   Added:             {_fmt_list(added_hosts)}")
+            print(f"   Removed:           {_fmt_list(removed_hosts)}")
+            print(f"   Kept (any):        {_fmt_list(kept_hosts)}")
+            print(f"   Kept (with tag):   {_fmt_list(kept_with_tag_hosts)}")
+            print(f"   Kept (without tag): {_fmt_list(kept_without_tag_hosts)}")
         print(f"{'='*80}")
 
 
@@ -374,6 +404,8 @@ def _env_or_arg(arg_value: Optional[str], env_key: str) -> Optional[str]:
 def _load_config_file(path: Optional[str]) -> Dict[str, Any]:
     if not path:
         return {}
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
     try:
         with open(path, 'r', encoding='utf-8') as file:
             return json.load(file) or {}
@@ -558,10 +590,21 @@ Beispiele:
         action='store_true',
         help='Zeige nur an, was geändert würde, ohne tatsächlich zu ändern'
     )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Zeige detaillierte Host-Listen in der Zusammenfassung'
+    )
     
     args = parser.parse_args()
 
-    config = _load_config_file(args.config)
+    if args.config and not os.path.isfile(args.config):
+        parser.error(f"Config-Datei nicht gefunden: {args.config}")
+
+    try:
+        config = _load_config_file(args.config)
+    except FileNotFoundError:
+        parser.error(f"Config-Datei nicht gefunden: {args.config}")
 
     config_conditions = config.get('conditions', []) if isinstance(config, dict) else []
     config_negative_conditions = config.get('negative_conditions', []) if isinstance(config, dict) else []
@@ -612,7 +655,8 @@ Beispiele:
         dry_run=args.dry_run,
         negate_conditions=args.negate_conditions,
         condition_mode=args.condition_mode or 'and',
-        negative_condition_mode=args.negative_condition_mode or 'and'
+        negative_condition_mode=args.negative_condition_mode or 'and',
+        verbose=args.verbose
     )
     
     manager.process_hosts()
