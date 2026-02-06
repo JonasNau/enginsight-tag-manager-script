@@ -80,7 +80,7 @@ class EngInsightTagManager:
             (k, re.compile(p)) for k, p in (negative_value_conditions or [])
         ]
         
-    def _make_request(self, method: str, endpoint: str, data: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _make_request(self, method: str, endpoint: str, data: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Macht HTTP-Requests zur EngInsight API."""
         url = f"{self.base_url}{endpoint}"
         try:
@@ -96,7 +96,7 @@ class EngInsightTagManager:
             print(f"API Error: {e}")
             if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 print(f"   Response: {e.response.text}")
-            return {}
+            return None
     
     def get_all_hosts(self) -> List[Dict[str, Any]]:
         """Ruft alle Hosts aus der EngInsight API ab."""
@@ -119,7 +119,10 @@ class EngInsightTagManager:
                     'tags': tags
                 }
             }
-            self._make_request('PUT', f'/v1/hosts/{host_id}', payload)
+            response = self._make_request('PUT', f'/v1/hosts/{host_id}', payload)
+            if response is None:
+                print("  Fehler beim Update: API-Request fehlgeschlagen")
+                return False
             return True
         except Exception as e:
             print(f"  Fehler beim Update: {e}")
